@@ -1,0 +1,78 @@
+name: Deploy FastAPI to GCP VM
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      VM_NAME: ${{ secrets.VM_NAME }}
+      VM_ZONE: ${{ secrets.VM_ZONE }}
+      VM_USER: ${{ secrets.VM_USER }}
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H $(gcloud compute instances describe $VM_NAME \
+            --zone $VM_ZONE \
+            --format='get(networkInterfaces[0].accessConfigs[0].natIP)') >> ~/.ssh/known_hosts
+
+      - name: Deploy code to VM
+        run: |
+          VM_IP=$(gcloud compute instances describe $VM_NAME \
+            --zone $VM_ZONE \
+            --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+
+          rsync -avz --delete \
+            --exclude '.git' \
+            ./ $VM_USER@$VM_IP:/home/$VM_USER/app
+
+      - name: Run FastAPI on VM
+        run: |
+          VM_IP=$(gcloud compute instances describe $VM_NAME \
+            --zone $VM_ZONE \
+            --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+
+          ssh $VM_USER@$VM_IP << 'EOF'
+            set -e
+            cd ~/app
+
+            sudo apt-get update
+            sudo apt-get install -y python3-venv
+
+            if [ ! -d "venv" ]; then
+              python3 -m venv venv
+            fi
+
+            source venv/bin/activate
+            pip install --upgrade pip
+            pip install -r requirements.txt
+
+            pkill -f uvicorn || true
+
+            nohup venv/bin/uvicorn main:app \
+              --host 0.0.0.0 \
+              --port 8000 \
+              --reload > fastapi.log 2>&1 &
+          EOF
