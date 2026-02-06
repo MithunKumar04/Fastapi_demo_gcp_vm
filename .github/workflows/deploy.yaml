@@ -36,7 +36,7 @@ jobs:
       - name: Push Docker image
         run: |
           docker push \
-          ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.ARTIFACT_REPO }}/${{ secrets.SERVICE_NAME }}:latest
+          ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.ARTIFACT_REPO }}/${{ secrets.SERVICE_NAME }}:latest -f app/Dockerfile app
 
       - name: Deploy to Cloud Run
         run: |
