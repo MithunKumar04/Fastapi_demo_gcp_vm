@@ -1,11 +1,14 @@
-name: Deploy simple FastAPI to GCP VM
+name: Deploy using Cloud Run
+
 on:
   push:
     branches:
       - main
+
 jobs:
-  deploy: 
+  deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,69 +23,25 @@ jobs:
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Get VM External IP
-        id: get_ip
+      - name: Configure Docker for Artifact Registry
         run: |
-          IP=$(gcloud compute instances describe ${{ secrets.VM_NAME }} --zone=${{ secrets.VM_ZONE }} --format='get(networkInterfaces[0].accessConfigs[0].natIP)') echo "vm_ip=$IP" >> $GITHUB_OUTPUT
+          gcloud auth configure-docker \
+            ${{ secrets.GCP_REGION }}-docker.pkg.dev
 
+      - name: Build Docker image
+        run: |
+          docker build -t \
+          ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.ARTIFACT_REPO }}/${{ secrets.SERVICE_NAME }}:latest .
 
-      - name: Deploy to GCP VM
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ steps.get_ip.outputs.vm_ip }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          port: 22
-          command_timeout: 10m
-          script: |
-            set -e
-            APP_DIR="/home/${{ secrets.VM_USER }}/fastapi_demo_app"
-            SERVICE_NAME="fastapi"
-            SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-            REPO_URL=https://github.com/MithunKumar04/Fastapi_demo_gcp_vm.git
-            mkdir -p $APP_DIR
+      - name: Push Docker image
+        run: |
+          docker push \
+          ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.ARTIFACT_REPO }}/${{ secrets.SERVICE_NAME }}:latest
 
-            cd $APP_DIR
-            if [ ! -d ".git"]; then
-              git init
-              git remote add origin "$REPO_URL"
-            else
-              git remote set-url origin "$REPO_URL"
-            fi
-
-
-            git fetch origin
-            git reset --hard origin/main
-
-
-            if [ ! -d "venv"]; then
-              python3 -m venv venv
-            fi
-
-
-            source venv/bin/activate
-            pip install --upgrade pip
-            pip install -r app/requirements.txt
-
-            sudo tee "$SERVICE_FILE" > /dev/null <<EOF
-            [Unit]
-            Description=FastAPI Demo Service
-            After=network.target
-            [Service]
-
-
-            User=${{ secrets.VM_USER }}
-            WorkingDirectory=$APP_DIR
-            ExecStart=${APP_DIR}/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
-            Restart=always
-            RestartSec=5
-            Environment=PATH=${APP_DIR}/venv/bin
-            [Install]
-            WantedBy=multi-user.target
-            EOF
-
-
-            sudo systemctl daemon-reload
-            sudo systemctl enable $SERVICE_NAME
-            sudo systemctl restart $SERVICE_NAME
-            sudo systemctl status $SERVICE_NAME --no-pager
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ secrets.SERVICE_NAME }} \
+            --image ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.ARTIFACT_REPO }}/${{ secrets.SERVICE_NAME }}:latest \
+            --region ${{ secrets.GCP_REGION }} \
+            --platform managed \
+            --allow-unauthenticated
