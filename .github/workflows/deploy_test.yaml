@@ -22,16 +22,11 @@ jobs:
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Get VM External IP
-        id: get_ip
-        run: |
-          IP=$(gcloud compute instances describe ${{ secrets.VM_NAME }} --zone=${{ secrets.VM_ZONE }} --format='get(networkInterfaces[0].accessConfigs[0].natIP)') echo "vm_ip=$IP" >> $GITHUB_OUTPUT
-
 
       - name: Deploy to GCP VM
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ steps.get_ip.outputs.vm_ip }}
+          host: ${{ secrets.VM_IP }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           port: 22
